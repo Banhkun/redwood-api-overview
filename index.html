@@ -102,11 +102,9 @@
       ];
 
       async function fetchHtml(url) {
-        try {
-          const res = await fetch(url, { mode: "cors", cache: "default" });
-          if (res.ok) return await res.text();
-        } catch {}
-
+        // Skip direct fetch — documentation.runmyjobs.cloud sends no
+        // Access-Control-Allow-Origin header, so the browser blocks it.
+        // Go straight to the same-origin Netlify proxy which adds the header.
         try {
           const res = await fetch(
             `/.netlify/functions/proxy?url=${encodeURIComponent(url)}`,
@@ -117,6 +115,7 @@
           }
         } catch {}
 
+        // Public CORS proxies as last-resort fallbacks (e.g. local dev without Netlify CLI).
         try {
           const res = await fetch(PROXIES[0](url));
           if (res.ok) {
@@ -1007,47 +1006,50 @@
           return true;
         }, []);
 
-        const loadPackage = useCallback(async (forceRefresh = false) => {
-          setLoading(true);
-          setUsingFallback(false);
-          setPkgFromCache(false);
+        const loadPackage = useCallback(
+          async (forceRefresh = false) => {
+            setLoading(true);
+            setUsingFallback(false);
+            setPkgFromCache(false);
 
-          // 1. Try the pre-built server-side JSON (produced by build-cache.js)
-          if (!forceRefresh) {
-            try {
-              const res = await fetch(PKG_TREE_URL, { cache: "no-store" });
-              if (res.ok) {
-                const json = await res.json();
-                if (applyParsedTree(json, true)) {
-                  setLoading(false);
-                  return;
+            // 1. Try the pre-built server-side JSON (produced by build-cache.js)
+            if (!forceRefresh) {
+              try {
+                const res = await fetch(PKG_TREE_URL, { cache: "no-store" });
+                if (res.ok) {
+                  const json = await res.json();
+                  if (applyParsedTree(json, true)) {
+                    setLoading(false);
+                    return;
+                  }
                 }
-              }
-            } catch {}
-          }
-
-          // 2. Fall back to fetching and parsing the live docs page
-          const text = await fetchHtml(BASE + "package-tree.html");
-          if (text) {
-            const parsed = parsePackageTree(text);
-            if (applyParsedTree(parsed, false)) {
-              setLoading(false);
-              return;
+              } catch {}
             }
-          }
 
-          // 3. Last resort: built-in class list, no hierarchy
-          const list = FALLBACK_CLASSES.map((n) => ({
-            name: n,
-            href: n + ".html",
-          }));
-          const map = new Map(list.map((c) => [c.name, c]));
-          setClasses(list);
-          setClassMap(map);
-          setHierarchy(null);
-          setUsingFallback(true);
-          setLoading(false);
-        }, [applyParsedTree]);
+            // 2. Fall back to fetching and parsing the live docs page
+            const text = await fetchHtml(BASE + "package-tree.html");
+            if (text) {
+              const parsed = parsePackageTree(text);
+              if (applyParsedTree(parsed, false)) {
+                setLoading(false);
+                return;
+              }
+            }
+
+            // 3. Last resort: built-in class list, no hierarchy
+            const list = FALLBACK_CLASSES.map((n) => ({
+              name: n,
+              href: n + ".html",
+            }));
+            const map = new Map(list.map((c) => [c.name, c]));
+            setClasses(list);
+            setClassMap(map);
+            setHierarchy(null);
+            setUsingFallback(true);
+            setLoading(false);
+          },
+          [applyParsedTree],
+        );
 
         useEffect(() => {
           loadPackage();
@@ -1298,7 +1300,6 @@
                     >${classes.length} classes<//
                   >`
                 : null}
-
               ${pkgFromCache && !loading
                 ? html`<button
                     onClick=${() => loadPackage(true)}
