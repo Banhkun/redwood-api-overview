@@ -283,7 +283,6 @@
         }
         return [];
       }
-
       function parseClassPage(htmlText, name) {
         const doc = new DOMParser().parseFromString(htmlText, "text/html");
 
@@ -369,28 +368,37 @@
           return [...names];
         }
 
-        doc
-          .querySelectorAll(".method-summary-table tr, .member-summary tr")
-          .forEach((row) => {
-            const cells = row.querySelectorAll("td");
-            if (cells.length < 2) return;
-            const returnType = (cells[0]?.textContent || "").trim();
-            const linkedTypes = extractLinkedTypes(cells[0], returnType);
-            const nameEl = cells[1]?.querySelector("code, .member-name");
+        // ── Primary path: CSS-grid method summary table (modern JavaDoc) ──────────
+        const methodPanel = doc.querySelector(
+          "#method-summary-table\\.tabpanel, #method-summary-table",
+        );
+        if (methodPanel) {
+          methodPanel.querySelectorAll(".col-second").forEach((colSecond) => {
+            // Method rows carry the "method-summary-table" class; field rows do not.
+            if (!colSecond.classList.contains("method-summary-table")) return;
+
+            const colFirst = colSecond.previousElementSibling;
+            if (!colFirst) return;
+
+            const returnType = colFirst.textContent.trim();
+            const linkedTypes = extractLinkedTypes(colFirst, returnType);
+
+            const nameEl = colSecond.querySelector(".member-name-link, code");
             if (!nameEl) return;
-            const sig = (nameEl.textContent || "").trim();
+            const sig = nameEl.textContent.trim();
             if (!sig || sig.length < 2) return;
-            const desc = (
-              cells[2]?.querySelector(".block")?.textContent ||
-              cells[2]?.textContent ||
-              ""
-            )
+            if (!sig.includes("(")) return; // fields never have parens
+
+            const colLast = colSecond.nextElementSibling;
+            const desc = (colLast?.querySelector(".block")?.textContent || "")
               .trim()
               .substring(0, 200);
+
             const base = sig.split("(")[0].trim();
             let type = "other";
             if (/^get[A-Z]/.test(base)) type = "get";
             else if (/^set[A-Z]/.test(base)) type = "set";
+
             result.ownMethods.push({
               sig,
               returnType,
@@ -399,38 +407,43 @@
               type,
             });
           });
-
-        if (result.ownMethods.length === 0) {
-          doc
-            .querySelectorAll(".member-list .detail, .method-details .detail")
-            .forEach((detail) => {
-              const sigEl = detail.querySelector(
-                ".element-name, .member-signature",
-              );
-              if (!sigEl) return;
-              const sig = (sigEl.textContent || "").trim().replace(/\s+/g, " ");
-              const nameMatch = sig.match(
-                /^(.*?)\s+([A-Za-z_][A-Za-z0-9_]*)\(/,
-              );
-              const returnTypeText = nameMatch ? nameMatch[1] : "";
-              const linkedTypes = extractLinkedTypes(sigEl, returnTypeText);
-              const desc = (detail.querySelector(".block")?.textContent || "")
-                .trim()
-                .substring(0, 200);
-              const base = sig.split("(")[0].trim().split(/\s+/).pop() || "";
-              let type = "other";
-              if (/^get[A-Z]/.test(base)) type = "get";
-              else if (/^set[A-Z]/.test(base)) type = "set";
-              result.ownMethods.push({
-                sig: sig.substring(0, 120),
-                returnType: returnTypeText.trim(),
-                linkedTypes,
-                desc,
-                type,
-              });
-            });
         }
 
+        // ── Fallback path: method detail sections (older JavaDoc / no summary) ────
+        if (result.ownMethods.length === 0) {
+          doc.querySelectorAll(".method-details .detail").forEach((detail) => {
+            const sigEl = detail.querySelector(
+              ".element-name, .member-signature",
+            );
+            if (!sigEl) return;
+            const rawSig = (sigEl.textContent || "")
+              .trim()
+              .replace(/\s+/g, " ");
+            if (!rawSig.includes("(")) return; // skip field details
+
+            const nameMatch = rawSig.match(
+              /^(.*?)\s+([A-Za-z_][A-Za-z0-9_]*)\(/,
+            );
+            const returnTypeText = nameMatch ? nameMatch[1] : "";
+            const linkedTypes = extractLinkedTypes(sigEl, returnTypeText);
+            const desc = (detail.querySelector(".block")?.textContent || "")
+              .trim()
+              .substring(0, 200);
+            const base = rawSig.split("(")[0].trim().split(/\s+/).pop() || "";
+            let type = "other";
+            if (/^get[A-Z]/.test(base)) type = "get";
+            else if (/^set[A-Z]/.test(base)) type = "set";
+            result.ownMethods.push({
+              sig: rawSig.substring(0, 120),
+              returnType: returnTypeText.trim(),
+              linkedTypes,
+              desc,
+              type,
+            });
+          });
+        }
+
+        // ── Inherited methods ─────────────────────────────────────────────────────
         doc
           .querySelectorAll(".inherited-list, .inherited-summary")
           .forEach((section) => {
