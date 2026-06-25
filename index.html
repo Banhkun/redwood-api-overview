@@ -283,6 +283,7 @@
         }
         return [];
       }
+
       function parseClassPage(htmlText, name) {
         const doc = new DOMParser().parseFromString(htmlText, "text/html");
 
@@ -296,6 +297,7 @@
           knownSubinterfaces: [],
           knownImplementingClasses: [],
           directSubclasses: [],
+          ownFields: [], // ← new
           ownMethods: [],
           inheritedMethods: [],
         };
@@ -368,13 +370,51 @@
           return [...names];
         }
 
+        // ── Fields (attributes) ───────────────────────────────────────────────────
+        const fieldSection = doc.querySelector("section.field-summary");
+        if (fieldSection) {
+          fieldSection.querySelectorAll(".col-second").forEach((colSecond) => {
+            const colFirst = colSecond.previousElementSibling;
+            if (!colFirst) return;
+
+            const fieldType = colFirst.textContent.trim();
+            const linkedTypes = extractLinkedTypes(colFirst, fieldType);
+
+            const nameEl = colSecond.querySelector(".member-name-link, code");
+            if (!nameEl) return;
+            const fieldName = nameEl.textContent.trim();
+            if (!fieldName) return;
+
+            const colLast = colSecond.nextElementSibling;
+            const desc = (colLast?.querySelector(".block")?.textContent || "")
+              .trim()
+              .substring(0, 200);
+
+            const isStatic = /\bstatic\b/.test(fieldType);
+            const isFinal = /\bfinal\b/.test(fieldType);
+            // Strip modifiers to get the bare type name
+            const bareType = fieldType
+              .replace(/\bstatic\b/g, "")
+              .replace(/\bfinal\b/g, "")
+              .trim();
+
+            result.ownFields.push({
+              name: fieldName,
+              fieldType: bareType,
+              linkedTypes,
+              desc,
+              isStatic,
+              isFinal,
+            });
+          });
+        }
+
         // ── Primary path: CSS-grid method summary table (modern JavaDoc) ──────────
         const methodPanel = doc.querySelector(
           "#method-summary-table\\.tabpanel, #method-summary-table",
         );
         if (methodPanel) {
           methodPanel.querySelectorAll(".col-second").forEach((colSecond) => {
-            // Method rows carry the "method-summary-table" class; field rows do not.
             if (!colSecond.classList.contains("method-summary-table")) return;
 
             const colFirst = colSecond.previousElementSibling;
@@ -387,7 +427,7 @@
             if (!nameEl) return;
             const sig = nameEl.textContent.trim();
             if (!sig || sig.length < 2) return;
-            if (!sig.includes("(")) return; // fields never have parens
+            if (!sig.includes("(")) return;
 
             const colLast = colSecond.nextElementSibling;
             const desc = (colLast?.querySelector(".block")?.textContent || "")
@@ -409,7 +449,7 @@
           });
         }
 
-        // ── Fallback path: method detail sections (older JavaDoc / no summary) ────
+        // ── Fallback path: method detail sections ─────────────────────────────────
         if (result.ownMethods.length === 0) {
           doc.querySelectorAll(".method-details .detail").forEach((detail) => {
             const sigEl = detail.querySelector(
@@ -419,7 +459,7 @@
             const rawSig = (sigEl.textContent || "")
               .trim()
               .replace(/\s+/g, " ");
-            if (!rawSig.includes("(")) return; // skip field details
+            if (!rawSig.includes("(")) return;
 
             const nameMatch = rawSig.match(
               /^(.*?)\s+([A-Za-z_][A-Za-z0-9_]*)\(/,
@@ -491,6 +531,65 @@
         return html`<div
           class=${`animate-pulse rounded bg-slate-200 ${className}`}
         ></div>`;
+      }
+
+      function FieldCard({ field, classMap, onSelect }) {
+        const links = (field.linkedTypes || []).filter((t) => classMap.has(t));
+        return html`
+          <div
+            class="border border-slate-200 rounded-md p-3 mb-2 bg-white hover:border-slate-300 transition-colors"
+          >
+            <div class="flex items-center gap-1.5 mb-1.5">
+              ${field.isStatic
+                ? html`<span
+                    class="inline-flex text-[10px] font-medium px-2 py-0.5 rounded border bg-slate-50 text-slate-500 border-slate-200"
+                    >static</span
+                  >`
+                : null}
+              ${field.isFinal
+                ? html`<span
+                    class="inline-flex text-[10px] font-medium px-2 py-0.5 rounded border bg-violet-50 text-violet-700 border-violet-200"
+                    >final</span
+                  >`
+                : null}
+            </div>
+            <div
+              class="font-mono text-[11px] text-slate-800 break-all leading-relaxed"
+            >
+              ${field.name}
+            </div>
+            ${field.fieldType
+              ? html`<div class="font-mono text-[10px] text-slate-400 mt-0.5">
+                  : ${field.fieldType}
+                </div>`
+              : null}
+            ${field.desc
+              ? html`<div
+                  class="text-[11px] text-slate-500 mt-1.5 leading-relaxed"
+                >
+                  ${field.desc}
+                </div>`
+              : null}
+            ${links.length > 0
+              ? html`<div class="flex flex-wrap gap-1 mt-2">
+                  ${links.map(
+                    (t) =>
+                      html`<button
+                        key=${t}
+                        onClick=${() => onSelect(t)}
+                        class="inline-flex items-center gap-1 text-[10px] font-mono text-blue-600 bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5 hover:bg-blue-100 hover:text-blue-800"
+                      >
+                        <i
+                          class="ti ti-arrow-right"
+                          style=${{ fontSize: "10px" }}
+                        ></i
+                        >${t}
+                      </button>`,
+                  )}
+                </div>`
+              : null}
+          </div>
+        `;
       }
 
       function MethodCard({ method, classMap, onSelect }) {
@@ -1695,6 +1794,9 @@
                                           >${detail.ownMethods.length} own
                                           methods<//
                                         >
+                                        ${detail.ownFields.length > 0
+                                          ? html`<${Badge} tone="outline">${detail.ownFields.length} fields<//${Badge}>`
+                                          : null}
                                         ${getters.length > 0
                                           ? html`<${Badge} tone="emerald"
                                               >${getters.length} getters<//
@@ -1720,6 +1822,10 @@
                                     >
                                       ${[
                                         [
+                                          "fields",
+                                          `Fields (${detail.ownFields.length})`,
+                                        ],
+                                        [
                                           "all",
                                           `All (${detail.ownMethods.length})`,
                                         ],
@@ -1742,65 +1848,82 @@
                                         `,
                                       )}
                                     </div>
-
-                                    ${methodTab === "inherited"
-                                      ? detail.inheritedMethods.length === 0
+                                    ${methodTab === "fields"
+                                      ? detail.ownFields.length === 0
                                         ? html`<p
                                             class="text-xs text-slate-400 text-center py-8"
                                           >
-                                            No inherited methods found
+                                            No fields found
                                           </p>`
-                                        : detail.inheritedMethods.map(
-                                            (group, i) => html`
-                                              <div key=${i} class="mb-5">
-                                                <div
-                                                  class="text-[11px] font-medium text-slate-500 mb-2 flex items-center gap-1.5"
-                                                >
-                                                  <span>Inherited from</span>
-                                                  <button
-                                                    onClick=${() =>
-                                                      selectByName(group.from)}
-                                                    class="font-mono text-blue-600 hover:text-blue-800 flex items-center gap-0.5 hover:underline"
-                                                  >
-                                                    ${group.from}
-                                                    <i
-                                                      class="ti ti-arrow-right"
-                                                      style=${{
-                                                        fontSize: "10px",
-                                                      }}
-                                                    ></i>
-                                                  </button>
-                                                </div>
-                                                <div
-                                                  class="flex flex-wrap gap-1.5"
-                                                >
-                                                  ${group.methods.map(
-                                                    (m) =>
-                                                      html`<span
-                                                        key=${m}
-                                                        class="font-mono text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded border border-slate-200"
-                                                        >${m}</span
-                                                      >`,
-                                                  )}
-                                                </div>
-                                              </div>
-                                            `,
-                                          )
-                                      : visibleMethods.length === 0
-                                        ? html`<p
-                                            class="text-xs text-slate-400 text-center py-8"
-                                          >
-                                            No methods in this category
-                                          </p>`
-                                        : visibleMethods.map(
-                                            (m, i) =>
-                                              html`<${MethodCard}
+                                        : detail.ownFields.map(
+                                            (f, i) =>
+                                              html`<${FieldCard}
                                                 key=${i}
-                                                method=${m}
+                                                field=${f}
                                                 classMap=${classMap}
                                                 onSelect=${selectByName}
                                               />`,
-                                          )}
+                                          )
+                                      : methodTab === "inherited"
+                                        ? detail.inheritedMethods.length === 0
+                                          ? html`<p
+                                              class="text-xs text-slate-400 text-center py-8"
+                                            >
+                                              No inherited methods found
+                                            </p>`
+                                          : detail.inheritedMethods.map(
+                                              (group, i) => html`
+                                                <div key=${i} class="mb-5">
+                                                  <div
+                                                    class="text-[11px] font-medium text-slate-500 mb-2 flex items-center gap-1.5"
+                                                  >
+                                                    <span>Inherited from</span>
+                                                    <button
+                                                      onClick=${() =>
+                                                        selectByName(
+                                                          group.from,
+                                                        )}
+                                                      class="font-mono text-blue-600 hover:text-blue-800 flex items-center gap-0.5 hover:underline"
+                                                    >
+                                                      ${group.from}
+                                                      <i
+                                                        class="ti ti-arrow-right"
+                                                        style=${{
+                                                          fontSize: "10px",
+                                                        }}
+                                                      ></i>
+                                                    </button>
+                                                  </div>
+                                                  <div
+                                                    class="flex flex-wrap gap-1.5"
+                                                  >
+                                                    ${group.methods.map(
+                                                      (m) =>
+                                                        html`<span
+                                                          key=${m}
+                                                          class="font-mono text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded border border-slate-200"
+                                                          >${m}</span
+                                                        >`,
+                                                    )}
+                                                  </div>
+                                                </div>
+                                              `,
+                                            )
+                                        : visibleMethods.length === 0
+                                          ? html`<p
+                                              class="text-xs text-slate-400 text-center py-8"
+                                            >
+                                              No methods in this category
+                                            </p>`
+                                          : visibleMethods.map(
+                                              (m, i) =>
+                                                html`<${MethodCard}
+                                                  key=${i}
+                                                  method=${m}
+                                                  classMap=${classMap}
+                                                  onSelect=${selectByName}
+                                                />`,
+                                            )}
                                   </div>
                                 </div>
                               `
