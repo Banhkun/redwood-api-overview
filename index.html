@@ -143,7 +143,28 @@
 
         return null;
       }
-
+      function IntroBanner() {
+        const [dismissed, setDismissed] = useState(false);
+        if (dismissed) return null;
+        return html`
+          <div class="bg-blue-50 border-b border-blue-100 px-4 py-2.5 flex items-center gap-3 flex-shrink-0">
+            <i class="ti ti-info-circle text-blue-400 flex-shrink-0" style=${{ fontSize: "14px" }}></i>
+            <p class="text-[11px] text-blue-700 flex-1">
+              <span class="font-semibold">Stop guessing, start scripting.</span>
+              ${" "}Your shortcut from RMJ idea to working code
+              ${" "}<span class="text-blue-400">·</span>${" "}
+              For further support, contact <span class="font-semibold">Dinh Nhat Minh</span>. 🙏
+            </p>
+            <button
+              onClick=${() => setDismissed(true)}
+              class="text-blue-300 hover:text-blue-500 flex-shrink-0"
+              title="Dismiss"
+            >
+              <i class="ti ti-x" style=${{ fontSize: "13px" }}></i>
+            </button>
+          </div>
+        `;
+      }
       function parseLi(li) {
         const directLinks = Array.from(li.children).filter(
           (c) => c.tagName === "A",
@@ -1515,6 +1536,7 @@
                   </div>
                 `
               : null}
+            html`<${IntroBanner} />`
             ${viewMode === "relations"
               ? html`<${RelationsView}
                   classes=${classes}
