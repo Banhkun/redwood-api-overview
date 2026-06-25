@@ -780,6 +780,9 @@
         const [fromFilter, setFromFilter] = useState("");
         const [methodFilter, setMethodFilter] = useState("");
         const [toFilter, setToFilter] = useState("");
+        const [fromExact, setFromExact] = useState(false);
+        const [methodExact, setMethodExact] = useState(false);
+        const [toExact, setToExact] = useState(false);
 
         function tokens(raw) {
           return raw
@@ -788,19 +791,20 @@
             .filter(Boolean);
         }
 
-        function matchesField(value, raw) {
+        function matchesField(value, raw, exact) {
           const toks = tokens(raw);
           if (!toks.length) return true;
           const v = value.toLowerCase();
+          if (exact) return toks.some((t) => v === t);
           return toks.some((t) => v.includes(t));
         }
 
         const filtered = useMemo(() => {
           const rows = edges.filter(
             (e) =>
-              matchesField(e.from, fromFilter) &&
-              matchesField(e.method, methodFilter) &&
-              matchesField(e.to, toFilter),
+              matchesField(e.from, fromFilter, fromExact) &&
+              matchesField(e.method, methodFilter, methodExact) &&
+              matchesField(e.to, toFilter, toExact),
           );
           return [...rows].sort((a, b) => {
             if (sortBy === "to")
@@ -808,12 +812,39 @@
             if (sortBy === "method") return a.method.localeCompare(b.method);
             return a.from.localeCompare(b.from) || a.to.localeCompare(b.to);
           });
-        }, [edges, fromFilter, methodFilter, toFilter, sortBy]);
+        }, [
+          edges,
+          fromFilter,
+          methodFilter,
+          toFilter,
+          fromExact,
+          methodExact,
+          toExact,
+          sortBy,
+        ]);
 
         const filterDefs = [
-          { label: "From class", value: fromFilter, setter: setFromFilter },
-          { label: "Method", value: methodFilter, setter: setMethodFilter },
-          { label: "Linked class", value: toFilter, setter: setToFilter },
+          {
+            label: "From class",
+            value: fromFilter,
+            setter: setFromFilter,
+            exact: fromExact,
+            setExact: setFromExact,
+          },
+          {
+            label: "Method",
+            value: methodFilter,
+            setter: setMethodFilter,
+            exact: methodExact,
+            setExact: setMethodExact,
+          },
+          {
+            label: "Linked class",
+            value: toFilter,
+            setter: setToFilter,
+            exact: toExact,
+            setExact: setToExact,
+          },
         ];
 
         const headers = [
@@ -827,12 +858,32 @@
             <div class="p-2.5 border-b border-slate-100 flex-shrink-0">
               <div class="grid grid-cols-3 gap-2 mb-2">
                 ${filterDefs.map(
-                  ({ label, value, setter }) => html`
+                  ({ label, value, setter, exact, setExact }) => html`
                     <div class="flex flex-col gap-0.5">
-                      <label
-                        class="text-[10px] font-medium text-slate-400 uppercase tracking-wide px-0.5"
-                        >${label}</label
-                      >
+                      <div class="flex items-center justify-between px-0.5">
+                        <label
+                          class="text-[10px] font-medium text-slate-400 uppercase tracking-wide"
+                        >
+                          ${label}
+                        </label>
+                        <button
+                          onClick=${() => setExact((v) => !v)}
+                          title=${exact
+                            ? "Switch to contains match"
+                            : "Switch to exact match"}
+                          class=${`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+                            exact
+                              ? "bg-slate-900 text-white border-slate-900"
+                              : "bg-white text-slate-400 border-slate-200 hover:border-slate-400 hover:text-slate-600"
+                          }`}
+                        >
+                          <i
+                            class="ti ti-equal"
+                            style=${{ fontSize: "10px" }}
+                          ></i>
+                          exact
+                        </button>
+                      </div>
                       <div class="relative">
                         <i
                           class="ti ti-search absolute left-2 top-2 text-slate-400 pointer-events-none"
@@ -841,7 +892,7 @@
                         <input
                           value=${value}
                           onInput=${(e) => setter(e.target.value)}
-                          placeholder="keywords…"
+                          placeholder=${exact ? "exact name…" : "keywords…"}
                           class="w-full pl-7 h-8 text-xs bg-slate-50 border border-slate-200 rounded focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-300"
                         />
                       </div>
@@ -854,9 +905,9 @@
                   Space or comma separates keywords · OR within column · AND
                   across columns
                 </p>
-                <span class="text-[11px] text-slate-400 flex-shrink-0 ml-2"
-                  >${filtered.length} / ${edges.length} edges</span
-                >
+                <span class="text-[11px] text-slate-400 flex-shrink-0 ml-2">
+                  ${filtered.length} / ${edges.length} edges
+                </span>
               </div>
             </div>
             <div class="flex-1 overflow-auto">
