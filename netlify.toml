@@ -1,0 +1,7 @@
+[build]
+  command   = "node build-cache.js"
+  publish   = "."
+  functions = "netlify/functions"
+
+[build.environment]
+  NODE_VERSION = "20"

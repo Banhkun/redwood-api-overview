@@ -1,0 +1,1806 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Redwood API Explorer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.47.0/dist/tabler-icons.min.css"
+    />
+    <script
+      src="https://unpkg.com/react@18/umd/react.production.min.js"
+      crossorigin
+    ></script>
+    <script
+      src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"
+      crossorigin
+    ></script>
+    <style>
+      html,
+      body,
+      #root {
+        height: 100%;
+      }
+
+      body {
+        font-family:
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          sans-serif;
+      }
+
+      ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+
+      ::-webkit-scrollbar-thumb {
+        background: #cbd5e1;
+        border-radius: 4px;
+      }
+
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+    </style>
+  </head>
+
+  <body class="overflow-hidden bg-slate-50">
+    <div id="root" class="h-screen"></div>
+    <script type="module">
+      import htm from "https://unpkg.com/htm@3.1.1?module";
+
+      const html = htm.bind(React.createElement);
+      const { useState, useEffect, useCallback, useMemo } = React;
+
+      const BASE =
+        "https://documentation.runmyjobs.cloud/2025.3/Content/apidocs/com/redwood/scheduler/api/model/";
+
+      const RELATIONS_CACHE_URL = "./relations.json";
+
+      const PKG_TREE_URL = "./pkg-tree.json";
+
+      const PROXIES = [
+        (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+        (u) => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,
+        (u) =>
+          `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+      ];
+
+      const FALLBACK_CLASSES = [
+        "AbstractJobDefinition",
+        "Alias",
+        "AuditTrailEntry",
+        "BusinessUnit",
+        "CalendarDefinition",
+        "Constraint",
+        "ConstraintDefinition",
+        "Credential",
+        "DatabaseConnection",
+        "ExecutionServer",
+        "ExternalCredential",
+        "FileDefinition",
+        "FTPFileTransfer",
+        "InternalCredential",
+        "JobChain",
+        "JobChainCall",
+        "JobDefinition",
+        "JobDefinitionParameter",
+        "JobDefinitionParameterList",
+        "ObjectType",
+        "ParameterPrompt",
+        "Partition",
+        "Platform",
+        "Queue",
+        "ScriptDefinition",
+        "TimeZone",
+        "Variable",
+        "WorkloadDefinition",
+      ];
+
+      async function fetchHtml(url) {
+        try {
+          const res = await fetch(url, { mode: "cors", cache: "default" });
+          if (res.ok) return await res.text();
+        } catch {}
+
+        try {
+          const res = await fetch(
+            `/.netlify/functions/proxy?url=${encodeURIComponent(url)}`,
+          );
+          if (res.ok) {
+            const text = await res.text();
+            if (text.length > 100) return text;
+          }
+        } catch {}
+
+        try {
+          const res = await fetch(PROXIES[0](url));
+          if (res.ok) {
+            const text = await res.text();
+            if (text.length > 100) return text;
+          }
+        } catch {}
+
+        try {
+          const res = await fetch(PROXIES[1](url));
+          if (res.ok) {
+            const json = await res.json();
+            if (json.contents && json.contents.length > 100)
+              return json.contents;
+          }
+        } catch {}
+
+        try {
+          const res = await fetch(PROXIES[2](url));
+          if (res.ok) {
+            const text = await res.text();
+            if (text.length > 100) return text;
+          }
+        } catch {}
+
+        return null;
+      }
+
+      function parseLi(li) {
+        const directLinks = Array.from(li.children).filter(
+          (c) => c.tagName === "A",
+        );
+        const childUl = Array.from(li.children).find((c) => c.tagName === "UL");
+
+        let name = "";
+        let href = null;
+        let kind = "class";
+        let alsoExtends = [];
+
+        if (directLinks.length > 0) {
+          const primary =
+            directLinks.find((a) => a.classList.contains("type-name-link")) ||
+            directLinks[0];
+          name = (primary.textContent || "").trim();
+          href = primary.getAttribute("href");
+          const title = primary.getAttribute("title") || "";
+          kind = /interface/i.test(title) ? "interface" : "class";
+          alsoExtends = directLinks
+            .filter((a) => a !== primary)
+            .map((a) => ({
+              name: (a.textContent || "").trim(),
+              href: a.getAttribute("href"),
+            }))
+            .filter((a) => a.name);
+        } else {
+          const clone = li.cloneNode(true);
+          const nestedUl = clone.querySelector("ul");
+          if (nestedUl) nestedUl.remove();
+          name = (clone.textContent || "")
+            .trim()
+            .replace(/^com\.redwood\.scheduler\.api\.model\./, "");
+          kind = "external";
+        }
+
+        const children = childUl
+          ? Array.from(childUl.children)
+              .filter((c) => c.tagName === "LI")
+              .map(parseLi)
+          : [];
+
+        return { name, href, kind, alsoExtends, children };
+      }
+
+      function parsePackageTree(htmlText) {
+        const doc = new DOMParser().parseFromString(htmlText, "text/html");
+        const result = { classHierarchy: [], interfaceHierarchy: [] };
+
+        const sections = doc.querySelectorAll("section.hierarchy");
+        const assign = (h2, ul) => {
+          if (!h2 || !ul) return;
+          const label = (h2.textContent || "").toLowerCase();
+          const roots = Array.from(ul.children)
+            .filter((c) => c.tagName === "LI")
+            .map(parseLi);
+          if (label.includes("interface")) result.interfaceHierarchy = roots;
+          else result.classHierarchy = roots;
+        };
+
+        if (sections.length > 0) {
+          sections.forEach((section) =>
+            assign(section.querySelector("h2"), section.querySelector("ul")),
+          );
+        } else {
+          doc.querySelectorAll("h2").forEach((h2) => {
+            let ul = h2.nextElementSibling;
+            while (ul && ul.tagName !== "UL") ul = ul.nextElementSibling;
+            assign(h2, ul);
+          });
+        }
+
+        return result;
+      }
+
+      function flattenTree(roots, out) {
+        out = out || new Map();
+        for (const node of roots) {
+          if (node.href && !out.has(node.name)) {
+            out.set(node.name, { name: node.name, href: node.href });
+          }
+          for (const ae of node.alsoExtends || []) {
+            if (ae.href && !out.has(ae.name))
+              out.set(ae.name, { name: ae.name, href: ae.href });
+          }
+          if (node.children && node.children.length)
+            flattenTree(node.children, out);
+        }
+        return out;
+      }
+
+      function findNode(roots, name) {
+        for (const node of roots) {
+          if (node.name === name) return node;
+          if (node.children && node.children.length) {
+            const found = findNode(node.children, name);
+            if (found) return found;
+          }
+        }
+        return null;
+      }
+
+      function subtreeMatches(node, filterLower) {
+        if (node.name.toLowerCase().includes(filterLower)) return true;
+        if (
+          (node.alsoExtends || []).some((a) =>
+            a.name.toLowerCase().includes(filterLower),
+          )
+        )
+          return true;
+        return (node.children || []).some((c) =>
+          subtreeMatches(c, filterLower),
+        );
+      }
+
+      function extractDD(doc, label) {
+        const target = label.toLowerCase();
+        const dts = doc.querySelectorAll("dt");
+        for (const dt of dts) {
+          const text = (dt.textContent || "")
+            .replace(/:\s*$/, "")
+            .trim()
+            .toLowerCase();
+          if (text === target) {
+            const dd = dt.nextElementSibling;
+            if (dd && dd.tagName === "DD") {
+              const links = Array.from(dd.querySelectorAll("a"))
+                .map((a) => (a.textContent || "").trim())
+                .filter(Boolean);
+              if (links.length) return links;
+              return (dd.textContent || "")
+                .split(",")
+                .map((s) => s.trim())
+                .filter(Boolean);
+            }
+          }
+        }
+        return [];
+      }
+
+      function parseClassPage(htmlText, name) {
+        const doc = new DOMParser().parseFromString(htmlText, "text/html");
+
+        const result = {
+          name,
+          kind: null,
+          description: "",
+          extendsType: null,
+          superinterfaces: [],
+          implementsTypes: [],
+          knownSubinterfaces: [],
+          knownImplementingClasses: [],
+          directSubclasses: [],
+          ownMethods: [],
+          inheritedMethods: [],
+        };
+
+        const block = doc.querySelector(".block");
+        if (block)
+          result.description = (block.textContent || "")
+            .trim()
+            .substring(0, 400);
+
+        const h1text = (
+          doc.querySelector("h1")?.textContent || ""
+        ).toLowerCase();
+        if (h1text.includes("interface")) result.kind = "interface";
+        else if (h1text.includes("enum")) result.kind = "enum";
+        else if (h1text.includes("class")) result.kind = "class";
+
+        const inh = doc.querySelector(
+          ".inheritance, .type-hierarchy-tabbed-content, .inheritance-hierarchy",
+        );
+        if (inh) {
+          const links = Array.from(inh.querySelectorAll("a")).filter(
+            (a) => (a.textContent || "").trim() !== name,
+          );
+          if (links.length)
+            result.extendsType = (
+              links[links.length - 1].textContent || ""
+            ).trim();
+        }
+
+        result.superinterfaces = extractDD(doc, "All Superinterfaces");
+        result.implementsTypes = extractDD(doc, "All Implemented Interfaces");
+        result.knownSubinterfaces = extractDD(doc, "All Known Subinterfaces");
+        result.knownImplementingClasses = extractDD(
+          doc,
+          "All Known Implementing Classes",
+        );
+        result.directSubclasses = extractDD(doc, "Direct Known Subclasses");
+
+        const GENERIC_WRAPPERS = new Set([
+          "RWIterable",
+          "RWIterator",
+          "RWList",
+          "RWSet",
+          "RWMap",
+          "List",
+          "Set",
+          "Map",
+          "Collection",
+          "Iterator",
+          "Iterable",
+          "Optional",
+        ]);
+
+        function extractLinkedTypes(el, rawText) {
+          const names = new Set();
+          if (el) {
+            el.querySelectorAll("a").forEach((a) => {
+              const t = (a.textContent || "").trim();
+              if (t && !GENERIC_WRAPPERS.has(t) && /^[A-Z]/.test(t))
+                names.add(t);
+            });
+          }
+          if (names.size === 0 && rawText) {
+            const matches = rawText.match(/[A-Z][A-Za-z0-9_]*/g) || [];
+            matches.forEach((t) => {
+              if (!GENERIC_WRAPPERS.has(t)) names.add(t);
+            });
+          }
+          return [...names];
+        }
+
+        doc
+          .querySelectorAll(".method-summary-table tr, .member-summary tr")
+          .forEach((row) => {
+            const cells = row.querySelectorAll("td");
+            if (cells.length < 2) return;
+            const returnType = (cells[0]?.textContent || "").trim();
+            const linkedTypes = extractLinkedTypes(cells[0], returnType);
+            const nameEl = cells[1]?.querySelector("code, .member-name");
+            if (!nameEl) return;
+            const sig = (nameEl.textContent || "").trim();
+            if (!sig || sig.length < 2) return;
+            const desc = (
+              cells[2]?.querySelector(".block")?.textContent ||
+              cells[2]?.textContent ||
+              ""
+            )
+              .trim()
+              .substring(0, 200);
+            const base = sig.split("(")[0].trim();
+            let type = "other";
+            if (/^get[A-Z]/.test(base)) type = "get";
+            else if (/^set[A-Z]/.test(base)) type = "set";
+            result.ownMethods.push({
+              sig,
+              returnType,
+              linkedTypes,
+              desc,
+              type,
+            });
+          });
+
+        if (result.ownMethods.length === 0) {
+          doc
+            .querySelectorAll(".member-list .detail, .method-details .detail")
+            .forEach((detail) => {
+              const sigEl = detail.querySelector(
+                ".element-name, .member-signature",
+              );
+              if (!sigEl) return;
+              const sig = (sigEl.textContent || "").trim().replace(/\s+/g, " ");
+              const nameMatch = sig.match(
+                /^(.*?)\s+([A-Za-z_][A-Za-z0-9_]*)\(/,
+              );
+              const returnTypeText = nameMatch ? nameMatch[1] : "";
+              const linkedTypes = extractLinkedTypes(sigEl, returnTypeText);
+              const desc = (detail.querySelector(".block")?.textContent || "")
+                .trim()
+                .substring(0, 200);
+              const base = sig.split("(")[0].trim().split(/\s+/).pop() || "";
+              let type = "other";
+              if (/^get[A-Z]/.test(base)) type = "get";
+              else if (/^set[A-Z]/.test(base)) type = "set";
+              result.ownMethods.push({
+                sig: sig.substring(0, 120),
+                returnType: returnTypeText.trim(),
+                linkedTypes,
+                desc,
+                type,
+              });
+            });
+        }
+
+        doc
+          .querySelectorAll(".inherited-list, .inherited-summary")
+          .forEach((section) => {
+            const heading = section.querySelector(
+              "h3, caption a, .caption span",
+            );
+            const from = (heading?.textContent || "").trim() || "Parent";
+            const methods = [];
+            section.querySelectorAll("code a, a[href]").forEach((a) => {
+              const text = (a.textContent || "").trim();
+              if (
+                text &&
+                text.length > 1 &&
+                !text.includes(" ") &&
+                !text.includes(".") &&
+                /^[a-z]/.test(text)
+              ) {
+                methods.push(text);
+              }
+            });
+            if (methods.length > 0)
+              result.inheritedMethods.push({
+                from,
+                methods: [...new Set(methods)],
+              });
+          });
+
+        return result;
+      }
+
+      function Badge({ children, tone = "default", className = "" }) {
+        const tones = {
+          default: "bg-slate-100 text-slate-600 border-slate-200",
+          outline: "bg-white text-slate-600 border-slate-200",
+          emerald: "bg-emerald-50 text-emerald-700 border-emerald-200",
+          amber: "bg-amber-50 text-amber-700 border-amber-200",
+        };
+        return html`<span
+          class=${`inline-flex items-center rounded border px-2 py-0.5 text-[10px] font-medium ${tones[tone] || tones.default} ${className}`}
+          >${children}</span
+        >`;
+      }
+
+      function Skeleton({ className = "" }) {
+        return html`<div
+          class=${`animate-pulse rounded bg-slate-200 ${className}`}
+        ></div>`;
+      }
+
+      function MethodCard({ method, classMap, onSelect }) {
+        const styles = {
+          get: {
+            pill: "bg-emerald-50 text-emerald-700 border-emerald-200",
+            label: "getter",
+          },
+          set: {
+            pill: "bg-amber-50 text-amber-700 border-amber-200",
+            label: "setter",
+          },
+          other: {
+            pill: "bg-slate-50 text-slate-500 border-slate-200",
+            label: "method",
+          },
+        };
+        const s = styles[method.type] || styles.other;
+        const links = (method.linkedTypes || []).filter((t) => classMap.has(t));
+        return html`
+          <div
+            class="border border-slate-200 rounded-md p-3 mb-2 bg-white hover:border-slate-300 transition-colors"
+          >
+            <div
+              class=${`inline-flex text-[10px] font-medium px-2 py-0.5 rounded border mb-1.5 ${s.pill}`}
+            >
+              ${s.label}
+            </div>
+            <div
+              class="font-mono text-[11px] text-slate-800 break-all leading-relaxed"
+            >
+              ${method.sig}
+            </div>
+            ${method.returnType
+              ? html`<div class="font-mono text-[10px] text-slate-400 mt-0.5">
+                  → ${method.returnType}
+                </div>`
+              : null}
+            ${method.desc
+              ? html`<div
+                  class="text-[11px] text-slate-500 mt-1.5 leading-relaxed"
+                >
+                  ${method.desc}
+                </div>`
+              : null}
+            ${links.length > 0
+              ? html`<div class="flex flex-wrap gap-1 mt-2">
+                  ${links.map(
+                    (t) =>
+                      html`<button
+                        key=${t}
+                        onClick=${() => onSelect(t)}
+                        class="inline-flex items-center gap-1 text-[10px] font-mono text-blue-600 bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5 hover:bg-blue-100 hover:text-blue-800"
+                      >
+                        <i
+                          class="ti ti-arrow-right"
+                          style=${{ fontSize: "10px" }}
+                        ></i
+                        >${t}
+                      </button>`,
+                  )}
+                </div>`
+              : null}
+          </div>
+        `;
+      }
+
+      function RelationshipRow({ label, items, onSelect, classMap }) {
+        if (!items || items.length === 0) return null;
+        return html`
+          <div
+            class="flex flex-wrap items-baseline gap-x-1.5 gap-y-1 text-xs text-slate-500 mb-1.5"
+          >
+            <span class="flex-shrink-0">${label}:</span>
+            ${items.map((n) =>
+              classMap.has(n)
+                ? html`<button
+                    key=${n}
+                    onClick=${() => onSelect(n)}
+                    class="font-mono text-[11px] text-blue-600 hover:text-blue-800 hover:underline"
+                  >
+                    ${n}
+                  </button>`
+                : html`<span
+                    key=${n}
+                    class="font-mono text-[11px] text-slate-400"
+                    >${n}</span
+                  >`,
+            )}
+          </div>
+        `;
+      }
+
+      function TreeNode({
+        node,
+        depth,
+        expanded,
+        toggle,
+        selectedName,
+        onSelect,
+        filter,
+      }) {
+        const filterLower = filter ? filter.toLowerCase() : "";
+        if (filterLower && !subtreeMatches(node, filterLower)) return null;
+
+        const hasChildren = node.children && node.children.length > 0;
+        const isExpanded = filterLower ? hasChildren : expanded.has(node.name);
+        const isSelected = node.name === selectedName;
+        const isMatch =
+          filterLower && node.name.toLowerCase().includes(filterLower);
+
+        const nameClasses = [
+          "font-mono text-[11px] text-left truncate min-w-0",
+          isSelected
+            ? "text-slate-900 font-semibold"
+            : isMatch
+              ? "text-blue-700 bg-amber-100 rounded px-0.5"
+              : node.href
+                ? "text-slate-700 hover:text-blue-700"
+                : "text-slate-400 italic",
+        ].join(" ");
+
+        return html`
+          <div>
+            <div
+              class="flex items-center gap-1 py-0.5 pr-2"
+              style=${{ paddingLeft: `${depth * 14 + 4}px` }}
+            >
+              ${hasChildren
+                ? html`<button
+                    onClick=${() => toggle(node.name)}
+                    class="w-3.5 h-3.5 flex items-center justify-center text-slate-400 hover:text-slate-600 flex-shrink-0"
+                    aria-label=${isExpanded ? "Collapse" : "Expand"}
+                  >
+                    <i
+                      class=${isExpanded
+                        ? "ti ti-chevron-down"
+                        : "ti ti-chevron-right"}
+                      style=${{ fontSize: "12px" }}
+                    ></i>
+                  </button>`
+                : html`<span class="w-3.5 h-3.5 flex-shrink-0"></span>`}
+              ${node.href
+                ? html`<button
+                    onClick=${() => onSelect(node)}
+                    class=${nameClasses}
+                    title=${node.name}
+                  >
+                    ${node.name}
+                  </button>`
+                : html`<span class=${nameClasses} title=${node.name}
+                    >${node.name}</span
+                  >`}
+              ${node.alsoExtends && node.alsoExtends.length > 0
+                ? html`<span class="text-[10px] text-slate-400 truncate min-w-0"
+                    >also:
+                    ${node.alsoExtends.map((a) => a.name).join(", ")}</span
+                  >`
+                : null}
+            </div>
+            ${hasChildren && isExpanded
+              ? html`<div>
+                  ${node.children.map(
+                    (child) =>
+                      html`<${TreeNode}
+                        key=${child.name}
+                        node=${child}
+                        depth=${depth + 1}
+                        expanded=${expanded}
+                        toggle=${toggle}
+                        selectedName=${selectedName}
+                        onSelect=${onSelect}
+                        filter=${filter}
+                      />`,
+                  )}
+                </div>`
+              : null}
+          </div>
+        `;
+      }
+
+      /* ============================================================
+           Relations view
+           ============================================================ */
+
+      function RelationsTable({ edges, onSelect }) {
+        const [sortBy, setSortBy] = useState("from");
+        const [fromFilter, setFromFilter] = useState("");
+        const [methodFilter, setMethodFilter] = useState("");
+        const [toFilter, setToFilter] = useState("");
+
+        function tokens(raw) {
+          return raw
+            .split(/[\s,;]+/)
+            .map((s) => s.trim().toLowerCase())
+            .filter(Boolean);
+        }
+
+        function matchesField(value, raw) {
+          const toks = tokens(raw);
+          if (!toks.length) return true;
+          const v = value.toLowerCase();
+          return toks.some((t) => v.includes(t));
+        }
+
+        const filtered = useMemo(() => {
+          const rows = edges.filter(
+            (e) =>
+              matchesField(e.from, fromFilter) &&
+              matchesField(e.method, methodFilter) &&
+              matchesField(e.to, toFilter),
+          );
+          return [...rows].sort((a, b) => {
+            if (sortBy === "to")
+              return a.to.localeCompare(b.to) || a.from.localeCompare(b.from);
+            if (sortBy === "method") return a.method.localeCompare(b.method);
+            return a.from.localeCompare(b.from) || a.to.localeCompare(b.to);
+          });
+        }, [edges, fromFilter, methodFilter, toFilter, sortBy]);
+
+        const filterDefs = [
+          { label: "From class", value: fromFilter, setter: setFromFilter },
+          { label: "Method", value: methodFilter, setter: setMethodFilter },
+          { label: "Linked class", value: toFilter, setter: setToFilter },
+        ];
+
+        const headers = [
+          ["from", "From class"],
+          ["method", "Method"],
+          ["to", "Linked class"],
+        ];
+
+        return html`
+          <div class="flex flex-col h-full">
+            <div class="p-2.5 border-b border-slate-100 flex-shrink-0">
+              <div class="grid grid-cols-3 gap-2 mb-2">
+                ${filterDefs.map(
+                  ({ label, value, setter }) => html`
+                    <div class="flex flex-col gap-0.5">
+                      <label
+                        class="text-[10px] font-medium text-slate-400 uppercase tracking-wide px-0.5"
+                        >${label}</label
+                      >
+                      <div class="relative">
+                        <i
+                          class="ti ti-search absolute left-2 top-2 text-slate-400 pointer-events-none"
+                          style=${{ fontSize: "12px" }}
+                        ></i>
+                        <input
+                          value=${value}
+                          onInput=${(e) => setter(e.target.value)}
+                          placeholder="keywords…"
+                          class="w-full pl-7 h-8 text-xs bg-slate-50 border border-slate-200 rounded focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-300"
+                        />
+                      </div>
+                    </div>
+                  `,
+                )}
+              </div>
+              <div class="flex items-center justify-between">
+                <p class="text-[10px] text-slate-400">
+                  Space or comma separates keywords · OR within column · AND
+                  across columns
+                </p>
+                <span class="text-[11px] text-slate-400 flex-shrink-0 ml-2"
+                  >${filtered.length} / ${edges.length} edges</span
+                >
+              </div>
+            </div>
+            <div class="flex-1 overflow-auto">
+              <table class="w-full text-xs">
+                <thead
+                  class="sticky top-0 bg-slate-50 border-b border-slate-200"
+                >
+                  <tr>
+                    ${headers.map(
+                      ([key, label]) => html`
+                        <th
+                          key=${key}
+                          onClick=${() => setSortBy(key)}
+                          class=${`text-left px-3 py-2 font-medium cursor-pointer select-none ${sortBy === key ? "text-slate-900" : "text-slate-400 hover:text-slate-600"}`}
+                        >
+                          ${label} ${sortBy === key ? "↓" : ""}
+                        </th>
+                      `,
+                    )}
+                  </tr>
+                </thead>
+                <tbody>
+                  ${filtered.map(
+                    (e, i) => html`
+                      <tr
+                        key=${i}
+                        class="border-b border-slate-50 hover:bg-slate-50"
+                      >
+                        <td class="px-3 py-1.5">
+                          <button
+                            onClick=${() => onSelect(e.from)}
+                            class="font-mono text-blue-600 hover:underline"
+                          >
+                            ${e.from}
+                          </button>
+                        </td>
+                        <td class="px-3 py-1.5 font-mono text-slate-500">
+                          ${e.method}()
+                        </td>
+                        <td class="px-3 py-1.5">
+                          <button
+                            onClick=${() => onSelect(e.to)}
+                            class="font-mono text-blue-600 hover:underline"
+                          >
+                            ${e.to}
+                          </button>
+                        </td>
+                      </tr>
+                    `,
+                  )}
+                </tbody>
+              </table>
+              ${filtered.length === 0
+                ? html`<p class="p-6 text-center text-xs text-slate-400">
+                    No edges match your filters
+                  </p>`
+                : null}
+            </div>
+          </div>
+        `;
+      }
+
+      function RelationsView({
+        classes,
+        classMap,
+        loading,
+        graphEdges,
+        graphLoading,
+        graphProgress,
+        graphError,
+        graphSource,
+        onBuild,
+        onSelect,
+      }) {
+        const downloadJson = () => {
+          const blob = new Blob(
+            [
+              JSON.stringify(
+                { edges: graphEdges, generatedAt: new Date().toISOString() },
+                null,
+                2,
+              ),
+            ],
+            {
+              type: "application/json",
+            },
+          );
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = "relations.json";
+          a.click();
+          URL.revokeObjectURL(url);
+        };
+
+        if (loading) {
+          return html`<div class="flex-1 flex items-center justify-center">
+            <p class="text-sm text-slate-400">Loading class list…</p>
+          </div>`;
+        }
+
+        if (graphEdges === null) {
+          return html`
+            <div class="flex-1 flex items-center justify-center">
+              <div class="text-center space-y-3 max-w-sm">
+                <i
+                  class="ti ti-share-3 text-slate-200"
+                  style=${{ fontSize: "36px" }}
+                ></i>
+                <p class="text-sm text-slate-600 font-medium">
+                  Build the relationship graph
+                </p>
+                <p class="text-xs text-slate-400 leading-relaxed">
+                  Crawls all ${classes.length} classes and inspects each
+                  method's return type to find links to other classes (e.g.
+                  JobChain.getJobChainSteps() → JobChainStep). This may take a
+                  minute. If a
+                  <span class="font-mono">relations.json</span> cache file is
+                  hosted alongside this page, it's checked first automatically.
+                </p>
+                ${graphLoading
+                  ? html`
+                      <div class="space-y-1.5">
+                        <div
+                          class="h-1.5 w-64 mx-auto bg-slate-100 rounded-full overflow-hidden"
+                        >
+                          <div
+                            class="h-full bg-slate-900 transition-all"
+                            style=${{
+                              width: `${(graphProgress.done / Math.max(graphProgress.total, 1)) * 100}%`,
+                            }}
+                          ></div>
+                        </div>
+                        <p class="text-[11px] text-slate-400">
+                          ${graphProgress.done} / ${graphProgress.total} classes
+                        </p>
+                      </div>
+                    `
+                  : html`
+                      <button
+                        onClick=${onBuild}
+                        class="inline-flex items-center gap-1.5 text-xs font-medium bg-slate-900 text-white px-3.5 py-2 rounded hover:bg-slate-800"
+                      >
+                        <i
+                          class="ti ti-share-3"
+                          style=${{ fontSize: "13px" }}
+                        ></i>
+                        Build graph
+                      </button>
+                    `}
+                ${graphError
+                  ? html`<p class="text-[11px] text-red-500">${graphError}</p>`
+                  : null}
+              </div>
+            </div>
+          `;
+        }
+
+        return html`
+          <div class="flex-1 flex flex-col overflow-hidden">
+            <div
+              class="flex items-center justify-between px-2.5 pt-2.5 flex-shrink-0"
+            >
+              <span
+                class="text-xs font-medium text-slate-900 pb-2 border-b-2 border-slate-900"
+                >Class relations</span
+              >
+              <div class="flex items-center gap-2 mb-1">
+                ${graphSource === "cache"
+                  ? html`<span
+                      class="flex items-center gap-1 text-[11px] text-emerald-600"
+                    >
+                      <i
+                        class="ti ti-database"
+                        style=${{ fontSize: "12px" }}
+                      ></i>
+                      Loaded from cache
+                    </span>`
+                  : graphSource === "crawl"
+                    ? html`<span
+                        class="flex items-center gap-1 text-[11px] text-slate-400"
+                      >
+                        <i class="ti ti-bolt" style=${{ fontSize: "12px" }}></i>
+                        Live crawl
+                      </span>`
+                    : null}
+                <button
+                  onClick=${downloadJson}
+                  class="flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600"
+                  title="Download graph as relations.json"
+                >
+                  <i class="ti ti-download" style=${{ fontSize: "12px" }}></i>
+                  Download JSON
+                </button>
+                <button
+                  onClick=${onBuild}
+                  class="flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600"
+                  title="Rebuild graph from a live crawl"
+                >
+                  <i class="ti ti-refresh" style=${{ fontSize: "12px" }}></i>
+                  Rebuild
+                </button>
+              </div>
+            </div>
+            <div class="flex-1 overflow-hidden">
+              <${RelationsTable} edges=${graphEdges} onSelect=${onSelect} />
+            </div>
+          </div>
+        `;
+      }
+
+      /* ============================================================
+           Main app
+           ============================================================ */
+
+      function App() {
+        const [classes, setClasses] = useState([]);
+        const [classMap, setClassMap] = useState(new Map());
+        const [hierarchy, setHierarchy] = useState(null);
+        const [loading, setLoading] = useState(true);
+        const [usingFallback, setUsingFallback] = useState(false);
+        const [pkgFromCache, setPkgFromCache] = useState(false);
+        const [filter, setFilter] = useState("");
+
+        const [selectedName, setSelectedName] = useState(null);
+        const [detail, setDetail] = useState(null);
+        const [detailLoading, setDetailLoading] = useState(false);
+        const [detailFetchFailed, setDetailFetchFailed] = useState(false);
+        const [methodTab, setMethodTab] = useState("all");
+
+        const [sidebarTab, setSidebarTab] = useState("classes");
+        const [hierFilter, setHierFilter] = useState("");
+        const [expanded, setExpanded] = useState(new Set());
+
+        const [viewMode, setViewMode] = useState("explorer");
+        const [graphEdges, setGraphEdges] = useState(null);
+        const [graphLoading, setGraphLoading] = useState(false);
+        const [graphProgress, setGraphProgress] = useState({
+          done: 0,
+          total: 0,
+        });
+        const [graphError, setGraphError] = useState(null);
+        const [graphSource, setGraphSource] = useState(null);
+        const [cacheChecked, setCacheChecked] = useState(false);
+
+        const applyParsedTree = useCallback((parsed, fromCache) => {
+          const flat = flattenTree([
+            ...parsed.classHierarchy,
+            ...parsed.interfaceHierarchy,
+          ]);
+          if (flat.size === 0) return false;
+          const list = Array.from(flat.values()).sort((a, b) =>
+            a.name.localeCompare(b.name),
+          );
+          setClasses(list);
+          setClassMap(flat);
+          setHierarchy(parsed);
+          setPkgFromCache(!!fromCache);
+          return true;
+        }, []);
+
+        const loadPackage = useCallback(async (forceRefresh = false) => {
+          setLoading(true);
+          setUsingFallback(false);
+          setPkgFromCache(false);
+
+          // 1. Try the pre-built server-side JSON (produced by build-cache.js)
+          if (!forceRefresh) {
+            try {
+              const res = await fetch(PKG_TREE_URL, { cache: "no-store" });
+              if (res.ok) {
+                const json = await res.json();
+                if (applyParsedTree(json, true)) {
+                  setLoading(false);
+                  return;
+                }
+              }
+            } catch {}
+          }
+
+          // 2. Fall back to fetching and parsing the live docs page
+          const text = await fetchHtml(BASE + "package-tree.html");
+          if (text) {
+            const parsed = parsePackageTree(text);
+            if (applyParsedTree(parsed, false)) {
+              setLoading(false);
+              return;
+            }
+          }
+
+          // 3. Last resort: built-in class list, no hierarchy
+          const list = FALLBACK_CLASSES.map((n) => ({
+            name: n,
+            href: n + ".html",
+          }));
+          const map = new Map(list.map((c) => [c.name, c]));
+          setClasses(list);
+          setClassMap(map);
+          setHierarchy(null);
+          setUsingFallback(true);
+          setLoading(false);
+        }, [applyParsedTree]);
+
+        useEffect(() => {
+          loadPackage();
+        }, [loadPackage]);
+
+        const loadClass = useCallback(async (cls) => {
+          setSelectedName(cls.name);
+          setDetail(null);
+          setDetailLoading(true);
+          setDetailFetchFailed(false);
+          setMethodTab("all");
+
+          const text = await fetchHtml(BASE + cls.href);
+          if (text) {
+            setDetail(parseClassPage(text, cls.name));
+          } else {
+            setDetailFetchFailed(true);
+            setDetail({
+              name: cls.name,
+              kind: null,
+              description: "",
+              extendsType: null,
+              superinterfaces: [],
+              implementsTypes: [],
+              knownSubinterfaces: [],
+              knownImplementingClasses: [],
+              directSubclasses: [],
+              ownMethods: [],
+              inheritedMethods: [],
+            });
+          }
+          setDetailLoading(false);
+        }, []);
+
+        const selectByName = useCallback(
+          (name) => {
+            const cls = classMap.get(name);
+            if (cls) loadClass(cls);
+            else setFilter(name);
+          },
+          [classMap, loadClass],
+        );
+
+        const loadCachedGraph = useCallback(async () => {
+          if (cacheChecked || classMap.size === 0) return;
+          setCacheChecked(true);
+          try {
+            const res = await fetch(RELATIONS_CACHE_URL, { cache: "no-store" });
+            if (!res.ok) return;
+            const data = await res.json();
+            const edges = Array.isArray(data) ? data : data?.edges;
+            if (!Array.isArray(edges) || edges.length === 0) return;
+            const valid = edges.filter(
+              (e) =>
+                e &&
+                typeof e.from === "string" &&
+                typeof e.to === "string" &&
+                typeof e.method === "string" &&
+                classMap.has(e.from) &&
+                classMap.has(e.to),
+            );
+            if (valid.length === 0) return;
+            setGraphEdges(valid);
+            setGraphSource("cache");
+          } catch {
+            // No cache file available.
+          }
+        }, [cacheChecked, classMap]);
+
+        const buildRelationshipGraph = useCallback(async () => {
+          if (classes.length === 0) return;
+          setGraphLoading(true);
+          setGraphError(null);
+          setGraphEdges(null);
+          setGraphSource(null);
+          setGraphProgress({ done: 0, total: classes.length });
+
+          const edges = [];
+          const CONCURRENCY = 6;
+          let idx = 0;
+          let failures = 0;
+
+          async function worker() {
+            while (idx < classes.length) {
+              const i = idx++;
+              const cls = classes[i];
+              try {
+                const text = await fetchHtml(BASE + cls.href);
+                if (text) {
+                  const parsed = parseClassPage(text, cls.name);
+                  parsed.ownMethods.forEach((m) => {
+                    (m.linkedTypes || []).forEach((to) => {
+                      if (to !== cls.name && classMap.has(to)) {
+                        edges.push({
+                          from: cls.name,
+                          method: m.sig.split("(")[0],
+                          to,
+                        });
+                      }
+                    });
+                  });
+                } else {
+                  failures++;
+                }
+              } catch {
+                failures++;
+              }
+              setGraphProgress((p) => ({ ...p, done: p.done + 1 }));
+            }
+          }
+
+          await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+
+          if (edges.length === 0 && failures === classes.length) {
+            setGraphError("Could not fetch any class pages — try again later.");
+          }
+          setGraphEdges(edges);
+          setGraphSource("crawl");
+          setGraphLoading(false);
+        }, [classes, classMap]);
+
+        useEffect(() => {
+          if (
+            viewMode === "relations" &&
+            graphEdges === null &&
+            classMap.size > 0
+          ) {
+            loadCachedGraph();
+          }
+        }, [viewMode, graphEdges, classMap, loadCachedGraph]);
+
+        const toggle = useCallback((name) => {
+          setExpanded((prev) => {
+            const next = new Set(prev);
+            if (next.has(name)) next.delete(name);
+            else next.add(name);
+            return next;
+          });
+        }, []);
+
+        const revealInHierarchy = useCallback((name) => {
+          setSidebarTab("hierarchy");
+          setHierFilter(name);
+        }, []);
+
+        const filteredClasses = useMemo(
+          () =>
+            classes.filter(
+              (c) =>
+                !filter || c.name.toLowerCase().includes(filter.toLowerCase()),
+            ),
+          [classes, filter],
+        );
+
+        const getters =
+          detail?.ownMethods.filter((m) => m.type === "get") || [];
+        const setters =
+          detail?.ownMethods.filter((m) => m.type === "set") || [];
+        const others =
+          detail?.ownMethods.filter((m) => m.type === "other") || [];
+        const inheritedCount =
+          detail?.inheritedMethods.reduce(
+            (sum, g) => sum + g.methods.length,
+            0,
+          ) || 0;
+
+        const visibleMethods =
+          methodTab === "get"
+            ? getters
+            : methodTab === "set"
+              ? setters
+              : methodTab === "other"
+                ? others
+                : detail?.ownMethods || [];
+
+        const treeNode = useMemo(() => {
+          if (!hierarchy || !detail) return null;
+          return findNode(
+            [...hierarchy.classHierarchy, ...hierarchy.interfaceHierarchy],
+            detail.name,
+          );
+        }, [hierarchy, detail]);
+
+        const extendsImplements = useMemo(() => {
+          if (!detail) return [];
+          const set = new Set();
+          if (detail.extendsType) set.add(detail.extendsType);
+          detail.superinterfaces.forEach((n) => set.add(n));
+          detail.implementsTypes.forEach((n) => set.add(n));
+          (treeNode?.alsoExtends || []).forEach((a) => set.add(a.name));
+          set.delete(detail.name);
+          return Array.from(set);
+        }, [detail, treeNode]);
+
+        const knownSubtypes = useMemo(() => {
+          if (!detail) return [];
+          const set = new Set();
+          detail.knownSubinterfaces.forEach((n) => set.add(n));
+          detail.knownImplementingClasses.forEach((n) => set.add(n));
+          detail.directSubclasses.forEach((n) => set.add(n));
+          (treeNode?.children || []).forEach((c) => set.add(c.name));
+          set.delete(detail.name);
+          return Array.from(set);
+        }, [detail, treeNode]);
+
+        const openHref =
+          classMap.get(detail?.name)?.href ||
+          (detail ? detail.name + ".html" : "");
+
+        return html`
+          <div
+            class="h-screen flex flex-col bg-slate-50 font-sans overflow-hidden"
+          >
+            <header
+              class="bg-white border-b border-slate-200 px-4 py-2.5 flex items-center gap-3 flex-shrink-0"
+            >
+              <i
+                class="ti ti-stack-2 text-slate-400"
+                style=${{ fontSize: "18px" }}
+              ></i>
+              <span class="font-medium text-sm text-slate-800"
+                >Redwood API Explorer</span
+              >
+              <span class="text-slate-300 text-xs hidden sm:block">·</span>
+              <span class="text-xs text-slate-400 font-mono hidden sm:block"
+                >com.redwood.scheduler.api.model</span
+              >
+
+              <div
+                class="flex items-center gap-0.5 ml-3 bg-slate-100 rounded-md p-0.5"
+              >
+                <button
+                  onClick=${() => setViewMode("explorer")}
+                  class=${`px-2.5 py-1 text-[11px] font-medium rounded transition-colors ${viewMode === "explorer" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+                >
+                  Explorer
+                </button>
+                <button
+                  onClick=${() => setViewMode("relations")}
+                  class=${`px-2.5 py-1 text-[11px] font-medium rounded transition-colors ${viewMode === "relations" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+                >
+                  Relations
+                </button>
+              </div>
+
+              ${!loading
+                ? html`<${Badge} className="ml-auto"
+                    >${classes.length} classes<//
+                  >`
+                : null}
+
+              ${pkgFromCache && !loading
+                ? html`<button
+                    onClick=${() => loadPackage(true)}
+                    title="Class list loaded from pkg-tree.json · click to re-fetch live"
+                    class="flex items-center gap-1 text-[11px] text-emerald-600 hover:text-emerald-800"
+                  >
+                    <i class="ti ti-database" style=${{ fontSize: "12px" }}></i>
+                    <span class="hidden sm:inline">Cached</span>
+                  </button>`
+                : null}
+
+              <a
+                href=${BASE + "package-tree.html"}
+                target="_blank"
+                rel="noreferrer"
+                class="flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                <i
+                  class="ti ti-external-link"
+                  style=${{ fontSize: "12px" }}
+                ></i>
+                <span class="hidden sm:inline">Docs</span>
+              </a>
+            </header>
+
+            ${usingFallback
+              ? html`
+                  <div
+                    class="bg-amber-50 border-b border-amber-100 px-4 py-2 flex items-center gap-2 flex-shrink-0"
+                  >
+                    <i
+                      class="ti ti-alert-circle text-amber-500 flex-shrink-0"
+                      style=${{ fontSize: "14px" }}
+                    ></i>
+                    <p class="text-[11px] text-amber-700 flex-1">
+                      Couldn't fetch package-tree.html — using a built-in class
+                      list and no type hierarchy. Class details still load
+                      individually.
+                    </p>
+                    <button
+                      onClick=${() => loadPackage(true)}
+                      class="flex items-center gap-1 text-[11px] text-amber-700 hover:text-amber-900 font-medium"
+                    >
+                      <i
+                        class="ti ti-refresh"
+                        style=${{ fontSize: "12px" }}
+                      ></i>
+                      Retry
+                    </button>
+                  </div>
+                `
+              : null}
+            ${viewMode === "relations"
+              ? html`<${RelationsView}
+                  classes=${classes}
+                  classMap=${classMap}
+                  loading=${loading}
+                  graphEdges=${graphEdges}
+                  graphLoading=${graphLoading}
+                  graphProgress=${graphProgress}
+                  graphError=${graphError}
+                  graphSource=${graphSource}
+                  onBuild=${buildRelationshipGraph}
+                  onSelect=${(name) => {
+                    selectByName(name);
+                    setViewMode("explorer");
+                  }}
+                />`
+              : html`
+                  <div class="flex flex-1 overflow-hidden">
+                    <div
+                      class=${`flex flex-col border-r border-slate-200 bg-white flex-shrink-0 ${sidebarTab === "hierarchy" ? "w-96" : "w-56"}`}
+                    >
+                      <div class="flex border-b border-slate-100 flex-shrink-0">
+                        <button
+                          onClick=${() => setSidebarTab("classes")}
+                          class=${`flex-1 text-[11px] font-medium py-2 ${sidebarTab === "classes" ? "text-slate-900 border-b-2 border-slate-900" : "text-slate-400 hover:text-slate-600"}`}
+                        >
+                          Classes
+                        </button>
+                        <button
+                          onClick=${() =>
+                            hierarchy && setSidebarTab("hierarchy")}
+                          disabled=${!hierarchy}
+                          class=${`flex-1 text-[11px] font-medium py-2 ${
+                            sidebarTab === "hierarchy"
+                              ? "text-slate-900 border-b-2 border-slate-900"
+                              : hierarchy
+                                ? "text-slate-400 hover:text-slate-600"
+                                : "text-slate-200 cursor-not-allowed"
+                          }`}
+                        >
+                          Hierarchy
+                        </button>
+                      </div>
+
+                      ${sidebarTab === "classes"
+                        ? html`
+                            <div class="p-2.5 border-b border-slate-100">
+                              <div class="relative">
+                                <i
+                                  class="ti ti-search absolute left-2.5 top-2 text-slate-400 pointer-events-none"
+                                  style=${{ fontSize: "14px" }}
+                                ></i>
+                                <input
+                                  value=${filter}
+                                  onInput=${(e) => setFilter(e.target.value)}
+                                  placeholder="Filter…"
+                                  class="w-full pl-8 h-8 text-xs bg-slate-50 border border-slate-200 rounded focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-300"
+                                />
+                              </div>
+                            </div>
+                            <div class="flex-1 overflow-y-auto">
+                              ${loading
+                                ? html`<div class="p-3 space-y-1.5">
+                                    ${Array.from({ length: 10 }).map(
+                                      (_, i) =>
+                                        html`<${Skeleton}
+                                          key=${i}
+                                          className="h-7 w-full"
+                                        />`,
+                                    )}
+                                  </div>`
+                                : filteredClasses.length === 0
+                                  ? html`<p
+                                      class="p-4 text-center text-xs text-slate-400"
+                                    >
+                                      No matches
+                                    </p>`
+                                  : html`<div class="py-1">
+                                      ${filteredClasses.map(
+                                        (c) => html`
+                                          <button
+                                            key=${c.name}
+                                            onClick=${() => loadClass(c)}
+                                            class=${`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 transition-colors border-b border-slate-50 last:border-0 ${selectedName === c.name ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-50"}`}
+                                          >
+                                            <i
+                                              class=${`ti ti-code ${selectedName === c.name ? "opacity-60" : "opacity-30"}`}
+                                              style=${{ fontSize: "12px" }}
+                                            ></i>
+                                            <span class="font-mono truncate"
+                                              >${c.name}</span
+                                            >
+                                            ${selectedName === c.name
+                                              ? html`<i
+                                                  class="ti ti-chevron-right ml-auto opacity-60"
+                                                  style=${{ fontSize: "12px" }}
+                                                ></i>`
+                                              : null}
+                                          </button>
+                                        `,
+                                      )}
+                                    </div>`}
+                            </div>
+                          `
+                        : html`
+                            <div
+                              class="p-2.5 border-b border-slate-100 flex items-center gap-1.5"
+                            >
+                              <div class="relative flex-1">
+                                <i
+                                  class="ti ti-search absolute left-2.5 top-2 text-slate-400 pointer-events-none"
+                                  style=${{ fontSize: "14px" }}
+                                ></i>
+                                <input
+                                  value=${hierFilter}
+                                  onInput=${(e) =>
+                                    setHierFilter(e.target.value)}
+                                  placeholder="Filter tree…"
+                                  class="w-full pl-8 h-8 text-xs bg-slate-50 border border-slate-200 rounded focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-300"
+                                />
+                              </div>
+                              ${hierFilter
+                                ? html`<button
+                                    onClick=${() => setHierFilter("")}
+                                    class="text-slate-400 hover:text-slate-600 flex-shrink-0"
+                                  >
+                                    <i
+                                      class="ti ti-x"
+                                      style=${{ fontSize: "14px" }}
+                                    ></i>
+                                  </button>`
+                                : null}
+                            </div>
+                            <div
+                              class="flex-1 overflow-y-auto overflow-x-auto px-1"
+                            >
+                              ${hierarchy
+                                ? [
+                                    html`<div key="iface" class="pt-1.5 pb-1">
+                                      <div
+                                        class="text-[10px] font-medium text-slate-400 uppercase tracking-wide px-1 pb-1"
+                                      >
+                                        Interface hierarchy
+                                      </div>
+                                      ${hierarchy.interfaceHierarchy.map(
+                                        (n) =>
+                                          html`<${TreeNode}
+                                            key=${n.name}
+                                            node=${n}
+                                            depth=${0}
+                                            expanded=${expanded}
+                                            toggle=${toggle}
+                                            selectedName=${selectedName}
+                                            onSelect=${loadClass}
+                                            filter=${hierFilter}
+                                          />`,
+                                      )}
+                                    </div>`,
+                                    html`<div
+                                      key="cls"
+                                      class="pt-2 pb-2 border-t border-slate-100"
+                                    >
+                                      <div
+                                        class="text-[10px] font-medium text-slate-400 uppercase tracking-wide px-1 pb-1 pt-1"
+                                      >
+                                        Class hierarchy
+                                      </div>
+                                      ${hierarchy.classHierarchy.map(
+                                        (n) =>
+                                          html`<${TreeNode}
+                                            key=${n.name}
+                                            node=${n}
+                                            depth=${0}
+                                            expanded=${expanded}
+                                            toggle=${toggle}
+                                            selectedName=${selectedName}
+                                            onSelect=${loadClass}
+                                            filter=${hierFilter}
+                                          />`,
+                                      )}
+                                    </div>`,
+                                  ]
+                                : html`<p
+                                    class="p-4 text-center text-xs text-slate-400"
+                                  >
+                                    Hierarchy unavailable
+                                  </p>`}
+                            </div>
+                          `}
+                    </div>
+
+                    <div class="flex-1 overflow-hidden flex flex-col">
+                      ${!selectedName
+                        ? html`
+                            <div
+                              class="flex-1 flex items-center justify-center"
+                            >
+                              <div class="text-center space-y-2">
+                                <i
+                                  class="ti ti-code text-slate-200"
+                                  style=${{ fontSize: "32px" }}
+                                ></i>
+                                <p class="text-sm text-slate-400">
+                                  Select a class
+                                </p>
+                                <p class="text-xs text-slate-300">
+                                  ${classes.length} classes loaded
+                                </p>
+                              </div>
+                            </div>
+                          `
+                        : detailLoading
+                          ? html`
+                              <div class="p-5 space-y-3">
+                                <${Skeleton} className="h-6 w-48" />
+                                <${Skeleton} className="h-4 w-64" />
+                                <${Skeleton} className="h-4 w-32" />
+                                <div class="mt-5 space-y-2">
+                                  ${[1, 2, 3, 4, 5].map(
+                                    (i) =>
+                                      html`<${Skeleton}
+                                        key=${i}
+                                        className="h-16 w-full"
+                                      />`,
+                                  )}
+                                </div>
+                              </div>
+                            `
+                          : detail
+                            ? html`
+                                <div class="flex-1 overflow-y-auto">
+                                  <div class="p-5 max-w-3xl">
+                                    <div class="mb-4">
+                                      <div
+                                        class="flex items-start justify-between gap-3 mb-1"
+                                      >
+                                        <h1
+                                          class="text-base font-semibold text-slate-900 font-mono"
+                                        >
+                                          ${detail.name}
+                                        </h1>
+                                        <div
+                                          class="flex items-center gap-3 flex-shrink-0 mt-0.5"
+                                        >
+                                          ${hierarchy
+                                            ? html`<button
+                                                onClick=${() =>
+                                                  revealInHierarchy(
+                                                    detail.name,
+                                                  )}
+                                                class="flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600"
+                                              >
+                                                <i
+                                                  class="ti ti-binary-tree"
+                                                  style=${{ fontSize: "12px" }}
+                                                ></i>
+                                                Hierarchy
+                                              </button>`
+                                            : null}
+                                          <a
+                                            href=${BASE + openHref}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            class="flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600"
+                                            ><i
+                                              class="ti ti-external-link"
+                                              style=${{ fontSize: "12px" }}
+                                            ></i>
+                                            Open</a
+                                          >
+                                        </div>
+                                      </div>
+
+                                      <p
+                                        class="text-[10px] text-slate-400 font-mono mb-2"
+                                      >
+                                        com.redwood.scheduler.api.model.${detail.name}${detail.kind
+                                          ? html` <span class="text-slate-300"
+                                              >· ${detail.kind}</span
+                                            >`
+                                          : null}
+                                      </p>
+
+                                      <${RelationshipRow}
+                                        label="Extends / implements"
+                                        items=${extendsImplements}
+                                        onSelect=${selectByName}
+                                        classMap=${classMap}
+                                      />
+                                      <${RelationshipRow}
+                                        label="Known subtypes"
+                                        items=${knownSubtypes}
+                                        onSelect=${selectByName}
+                                        classMap=${classMap}
+                                      />
+
+                                      ${detail.description
+                                        ? html`<p
+                                            class="text-xs text-slate-500 leading-relaxed mb-3 mt-2"
+                                          >
+                                            ${detail.description}
+                                          </p>`
+                                        : null}
+                                      ${detailFetchFailed
+                                        ? html`
+                                            <div
+                                              class="flex items-center gap-1.5 text-[11px] text-amber-600 bg-amber-50 border border-amber-200 rounded px-2.5 py-1.5 mb-3"
+                                            >
+                                              <i
+                                                class="ti ti-alert-circle flex-shrink-0"
+                                                style=${{ fontSize: "12px" }}
+                                              ></i>
+                                              Could not fetch live data —
+                                              showing cached stub.
+                                              <a
+                                                href=${BASE + openHref}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                class="underline"
+                                                >Open in docs ↗</a
+                                              >
+                                            </div>
+                                          `
+                                        : null}
+
+                                      <div class="flex flex-wrap gap-1.5 mt-2">
+                                        <${Badge}
+                                          >${detail.ownMethods.length} own
+                                          methods<//
+                                        >
+                                        ${getters.length > 0
+                                          ? html`<${Badge} tone="emerald"
+                                              >${getters.length} getters<//
+                                            >`
+                                          : null}
+                                        ${setters.length > 0
+                                          ? html`<${Badge} tone="amber"
+                                              >${setters.length} setters<//
+                                            >`
+                                          : null}
+                                        ${inheritedCount > 0
+                                          ? html`<${Badge} tone="outline"
+                                              >${inheritedCount} inherited<//
+                                            >`
+                                          : null}
+                                      </div>
+                                    </div>
+
+                                    <hr class="border-slate-200 mb-4" />
+
+                                    <div
+                                      class="mb-4 flex gap-1 text-xs border-b border-slate-100"
+                                    >
+                                      ${[
+                                        [
+                                          "all",
+                                          `All (${detail.ownMethods.length})`,
+                                        ],
+                                        ["get", `Getters (${getters.length})`],
+                                        ["set", `Setters (${setters.length})`],
+                                        ["other", `Other (${others.length})`],
+                                        [
+                                          "inherited",
+                                          `Inherited (${inheritedCount})`,
+                                        ],
+                                      ].map(
+                                        ([key, label]) => html`
+                                          <button
+                                            key=${key}
+                                            onClick=${() => setMethodTab(key)}
+                                            class=${`px-2.5 h-8 -mb-px border-b-2 ${methodTab === key ? "border-slate-900 text-slate-900 font-medium" : "border-transparent text-slate-400 hover:text-slate-600"}`}
+                                          >
+                                            ${label}
+                                          </button>
+                                        `,
+                                      )}
+                                    </div>
+
+                                    ${methodTab === "inherited"
+                                      ? detail.inheritedMethods.length === 0
+                                        ? html`<p
+                                            class="text-xs text-slate-400 text-center py-8"
+                                          >
+                                            No inherited methods found
+                                          </p>`
+                                        : detail.inheritedMethods.map(
+                                            (group, i) => html`
+                                              <div key=${i} class="mb-5">
+                                                <div
+                                                  class="text-[11px] font-medium text-slate-500 mb-2 flex items-center gap-1.5"
+                                                >
+                                                  <span>Inherited from</span>
+                                                  <button
+                                                    onClick=${() =>
+                                                      selectByName(group.from)}
+                                                    class="font-mono text-blue-600 hover:text-blue-800 flex items-center gap-0.5 hover:underline"
+                                                  >
+                                                    ${group.from}
+                                                    <i
+                                                      class="ti ti-arrow-right"
+                                                      style=${{
+                                                        fontSize: "10px",
+                                                      }}
+                                                    ></i>
+                                                  </button>
+                                                </div>
+                                                <div
+                                                  class="flex flex-wrap gap-1.5"
+                                                >
+                                                  ${group.methods.map(
+                                                    (m) =>
+                                                      html`<span
+                                                        key=${m}
+                                                        class="font-mono text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded border border-slate-200"
+                                                        >${m}</span
+                                                      >`,
+                                                  )}
+                                                </div>
+                                              </div>
+                                            `,
+                                          )
+                                      : visibleMethods.length === 0
+                                        ? html`<p
+                                            class="text-xs text-slate-400 text-center py-8"
+                                          >
+                                            No methods in this category
+                                          </p>`
+                                        : visibleMethods.map(
+                                            (m, i) =>
+                                              html`<${MethodCard}
+                                                key=${i}
+                                                method=${m}
+                                                classMap=${classMap}
+                                                onSelect=${selectByName}
+                                              />`,
+                                          )}
+                                  </div>
+                                </div>
+                              `
+                            : null}
+                    </div>
+                  </div>
+                `}
+          </div>
+        `;
+      }
+
+      ReactDOM.createRoot(document.getElementById("root")).render(
+        html`<${App} />`,
+      );
+    </script>
+  </body>
+</html>
